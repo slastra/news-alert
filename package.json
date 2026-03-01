@@ -1,0 +1,24 @@
+{
+  "name": "news-alert",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^7.6.1",
+    "@types/bun": "latest",
+    "eslint": "^10.0.2"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1000.0",
+    "fast-xml-parser": "^5.4.1"
+  }
+}
