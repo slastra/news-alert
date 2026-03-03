@@ -5,9 +5,10 @@ import { DB_PATH, HAZARD_POLL_MS, POLL_INTERVALS } from './config.ts';
 import { FEEDS } from './feeds.ts';
 import { pollHazards } from './hazards.ts';
 import { log } from './logger.ts';
+import { loadNotifiers } from './notifiers/index.ts';
 import { startPollGroup } from './poller.ts';
 import { startServer } from './server.ts';
-import { Storage } from './storage.ts';
+import { sqliteDateTime, Storage } from './storage.ts';
 import { generateSummary } from './summarizer.ts';
 
 // Ensure data directory exists
@@ -24,7 +25,10 @@ for (const feed of FEEDS) {
   groups.set(feed.group, group);
 }
 
-log.info(`news-alert starting with ${FEEDS.length} feeds across ${groups.size} poll groups`);
+log.info(`Starting: ${FEEDS.length} feeds, ${groups.size} groups`);
+
+// Load notification channels
+loadNotifiers().catch(err => log.error('Failed to load notifiers', err));
 
 // Start HTTP status server
 startServer(storage);
@@ -39,17 +43,17 @@ for (const [group, feeds] of groups) {
 pollHazards(storage); // Initial poll on startup
 const hazardInterval = setInterval(() => pollHazards(storage), HAZARD_POLL_MS);
 intervals.push(hazardInterval);
-log.info(`Hazard monitoring started (every ${HAZARD_POLL_MS / 1000}s)`);
+log.info(`Hazards: polling every ${HAZARD_POLL_MS / 1000}s`);
 
 // Hourly snapshot job
 async function takeSnapshot() {
   try {
     const stats = storage.getStats();
-    const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
-    const headlines = storage.getTopHeadlines(5, oneHourAgo);
+    const sixHoursAgo = sqliteDateTime(new Date(Date.now() - 21600_000));
+    const headlines = storage.getTopHeadlines(5, sixHoursAgo);
     const summary = await generateSummary(headlines);
     storage.saveSnapshot(stats, summary);
-    log.info(`Snapshot saved — composite: ${stats.compositeScore}, articles/1h: ${stats.articleRate.total.lastHour}, alerts/24h: ${stats.alertCount24h}`);
+    log.info(`Snapshot: composite=${stats.compositeScore} articles/1h=${stats.articleRate.total.lastHour} alerts/24h=${stats.alertCount24h}`);
   }
   catch (err) {
     log.error('Snapshot failed', err);

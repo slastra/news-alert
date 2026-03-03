@@ -1,6 +1,7 @@
 import type { Storage } from './storage.ts';
 import { SERVER_PORT } from './config.ts';
 import { log } from './logger.ts';
+import { sqliteDateTime } from './storage.ts';
 import { generateSummary } from './summarizer.ts';
 
 export function startServer(storage: Storage): void {
@@ -15,8 +16,8 @@ export function startServer(storage: Storage): void {
       }
 
       if (url.pathname === '/summary') {
-        const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
-        const headlines = storage.getTopHeadlines(5, oneHourAgo);
+        const sixHoursAgo = sqliteDateTime(new Date(Date.now() - 21600_000));
+        const headlines = storage.getTopHeadlines(5, sixHoursAgo);
         const summary = await generateSummary(headlines);
         return Response.json({
           summary,
@@ -26,8 +27,8 @@ export function startServer(storage: Storage): void {
       }
 
       if (url.pathname === '/history') {
-        const now = new Date().toISOString();
-        const twentyFourHoursAgo = new Date(Date.now() - 86400_000).toISOString();
+        const now = sqliteDateTime(new Date());
+        const twentyFourHoursAgo = sqliteDateTime(new Date(Date.now() - 86400_000));
         const from = url.searchParams.get('from') ?? twentyFourHoursAgo;
         const to = url.searchParams.get('to') ?? now;
         const snapshots = storage.getHistory(from, to);

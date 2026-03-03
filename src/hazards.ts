@@ -4,11 +4,11 @@ import {
   EARTHQUAKE_LOCAL_MIN_MAG,
   EARTHQUAKE_LOCAL_RADIUS_KM,
   HAZARD_LOCATION,
-  NTFY_TOPIC,
   REQUEST_TIMEOUT_MS,
   USER_AGENT,
 } from './config.ts';
 import { log } from './logger.ts';
+import { notify } from './notifiers/index.ts';
 
 export interface HazardAlert {
   source: string;
@@ -219,34 +219,6 @@ async function fetchSpaceWeather(): Promise<HazardAlert[]> {
     });
 }
 
-// --- Notification ---
-
-const HAZARD_TAGS: Record<string, string> = {
-  'NWS': 'tornado,warning',
-  'USGS Earthquake': 'earthquake,warning',
-  'USGS Volcano': 'volcano,warning',
-  'NASA DONKI': 'sunny,warning',
-};
-
-async function sendHazardAlert(hazard: HazardAlert): Promise<void> {
-  try {
-    await fetch(NTFY_TOPIC, {
-      method: 'POST',
-      headers: {
-        Title: `[${hazard.severity.toUpperCase()}] ${hazard.source}`,
-        Priority: hazard.severity === 'extreme' ? 'urgent' : 'high',
-        Tags: HAZARD_TAGS[hazard.source] ?? 'warning',
-        Click: hazard.url,
-      },
-      body: `${hazard.title}\n\n${hazard.description}`,
-    });
-    log.info(`Hazard notification sent: "${hazard.title}"`);
-  }
-  catch (err) {
-    log.error(`Failed to send hazard notification for "${hazard.title}"`, err);
-  }
-}
-
 // --- Main poll function ---
 
 type FetchFn = () => Promise<HazardAlert[]>;
@@ -270,7 +242,13 @@ export async function pollHazards(storage: Storage): Promise<void> {
           continue;
 
         storage.markHazardSeen(alert.source, alert.id, alert.title, alert.severity);
-        await sendHazardAlert(alert);
+        await notify({
+          title: `[${alert.severity.toUpperCase()}] ${alert.source}`,
+          body: `${alert.title}\n\n${alert.description}`,
+          url: alert.url,
+          priority: alert.severity === 'extreme' ? 'urgent' : 'high',
+          source: alert.source,
+        });
         totalNew++;
         log.info(`New hazard: [${alert.severity}] ${alert.source}: "${alert.title}"`);
       }

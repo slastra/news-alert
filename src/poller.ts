@@ -81,7 +81,7 @@ export function startPollGroup(
     // Batch score all new articles in one API call
     if (allNew.length > 0) {
       try {
-        log.info(`Scoring ${allNew.length} new articles from ${groupName} group...`);
+        log.info(`Scoring ${allNew.length} articles (${groupName})`);
         const scored = await scoreArticles(allNew, storage);
         await logScoredArticles(scored);
         storage.saveScores(scored);
@@ -92,7 +92,7 @@ export function startPollGroup(
     }
   };
 
-  log.info(`Starting ${groupName} poll group (${feeds.length} feeds, every ${intervalMs / 1000}s)`);
+  log.info(`Poll group ${groupName}: ${feeds.length} feeds, every ${intervalMs / 1000}s`);
 
   // Run immediately on startup
   tick();

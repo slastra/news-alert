@@ -2,6 +2,11 @@ import type { Article } from './parser.ts';
 import type { ScoredArticle } from './scorer.ts';
 import { Database } from 'bun:sqlite';
 
+/** Format a Date to match SQLite's datetime('now') format: YYYY-MM-DD HH:MM:SS */
+export function sqliteDateTime(date: Date): string {
+  return date.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+}
+
 export interface FeedCache {
   etag: string | null;
   lastModified: string | null;
@@ -183,8 +188,8 @@ export class Storage {
   }
 
   getStats(): StatusResponse {
-    const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
-    const twentyFourHoursAgo = new Date(Date.now() - 86400_000).toISOString();
+    const oneHourAgo = sqliteDateTime(new Date(Date.now() - 3600_000));
+    const twentyFourHoursAgo = sqliteDateTime(new Date(Date.now() - 86400_000));
 
     // Article rate — total
     const totalLastHour = (this.db.query(
@@ -296,7 +301,7 @@ export class Storage {
   }
 
   getRecentHazards(): { sourceType: string; sourceId: string; title: string; severity: string | null; firstSeenAt: string }[] {
-    const twentyFourHoursAgo = new Date(Date.now() - 86400_000).toISOString();
+    const twentyFourHoursAgo = sqliteDateTime(new Date(Date.now() - 86400_000));
     const rows = this.db.query(`
       SELECT source_type, source_id, title, severity, first_seen_at
       FROM seen_hazards
@@ -314,7 +319,7 @@ export class Storage {
   }
 
   getSentAlerts24h(): string[] {
-    const twentyFourHoursAgo = new Date(Date.now() - 86400_000).toISOString();
+    const twentyFourHoursAgo = sqliteDateTime(new Date(Date.now() - 86400_000));
 
     // Confirmed news alerts
     const newsAlerts = this.db.query(`

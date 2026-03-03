@@ -13,10 +13,10 @@ export const POLL_INTERVALS = {
 export type PollGroup = keyof typeof POLL_INTERVALS;
 
 export const SERVER_PORT = 3100;
-// eslint-disable-next-line node/prefer-global/process
-export const NTFY_TOPIC = process.env.NTFY_TOPIC ?? '';
 
-// Hazard monitoring
+// Location
+// eslint-disable-next-line node/prefer-global/process
+export const LOCATION_NAME = process.env.LOCATION_NAME ?? 'the United States';
 // eslint-disable-next-line node/prefer-global/process
 export const HAZARD_LOCATION = { lat: Number(process.env.HAZARD_LAT ?? 0), lon: Number(process.env.HAZARD_LON ?? 0) };
 export const HAZARD_POLL_MS = 120_000; // 2 minutes

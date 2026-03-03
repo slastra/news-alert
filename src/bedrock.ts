@@ -1,53 +1,57 @@
-import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import type { ConverseCommandOutput } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 
 const REGION = 'us-east-1';
-export const NOVA_MODEL = 'amazon.nova-lite-v1:0';
+export const NEMOTRON_MODEL = 'nvidia.nemotron-nano-9b-v2';
 export const HAIKU_MODEL = 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 
 const client = new BedrockRuntimeClient({ region: REGION });
 
-interface NovaResponse {
-  output: { message: { content: { text: string }[] } };
+function extractText(response: ConverseCommandOutput): string {
+  const output = response.output;
+  if (output && 'message' in output && output.message?.content) {
+    for (const block of output.message.content) {
+      if ('text' in block && block.text)
+        return block.text;
+    }
+  }
+  return '';
 }
 
-interface HaikuResponse {
-  content: { text: string }[];
-}
-
-export async function invokeNova(prompt: string): Promise<string> {
-  const command = new InvokeModelCommand({
-    modelId: NOVA_MODEL,
-    contentType: 'application/json',
-    accept: 'application/json',
-    body: JSON.stringify({
-      messages: [{ role: 'user', content: [{ text: prompt }] }],
-      inferenceConfig: { maxTokens: 4096, temperature: 0 },
-    }),
+export async function invokeNemotron<T>(prompt: string, schema: Record<string, unknown>, name: string): Promise<T> {
+  const command = new ConverseCommand({
+    modelId: NEMOTRON_MODEL,
+    messages: [{ role: 'user', content: [{ text: prompt }] }],
+    inferenceConfig: { maxTokens: 4096, temperature: 0 },
+    outputConfig: {
+      textFormat: {
+        type: 'json_schema',
+        structure: { jsonSchema: { schema: JSON.stringify(schema), name } },
+      },
+    },
   });
 
   const response = await client.send(command);
-  const body = JSON.parse(new TextDecoder().decode(response.body)) as NovaResponse;
-  return body.output.message.content[0]?.text ?? '';
+  return JSON.parse(extractText(response)) as T;
 }
 
-export async function invokeHaiku(prompt: string, retries = 3): Promise<string> {
+export async function invokeHaiku<T>(prompt: string, schema: Record<string, unknown>, name: string, retries = 3): Promise<T> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const command = new InvokeModelCommand({
+      const command = new ConverseCommand({
         modelId: HAIKU_MODEL,
-        contentType: 'application/json',
-        accept: 'application/json',
-        body: JSON.stringify({
-          anthropic_version: 'bedrock-2023-05-31',
-          messages: [{ role: 'user', content: prompt }],
-          max_tokens: 256,
-          temperature: 0,
-        }),
+        messages: [{ role: 'user', content: [{ text: prompt }] }],
+        inferenceConfig: { maxTokens: 256, temperature: 0 },
+        outputConfig: {
+          textFormat: {
+            type: 'json_schema',
+            structure: { jsonSchema: { schema: JSON.stringify(schema), name } },
+          },
+        },
       });
 
       const response = await client.send(command);
-      const body = JSON.parse(new TextDecoder().decode(response.body)) as HaikuResponse;
-      return body.content[0]?.text ?? '';
+      return JSON.parse(extractText(response)) as T;
     }
     catch (err) {
       const isThrottled = err instanceof Error && err.message.includes('Too many requests');
@@ -62,10 +66,27 @@ export async function invokeHaiku(prompt: string, retries = 3): Promise<string> 
   throw new Error('Exhausted retries');
 }
 
-export function extractJSON(text: string): string {
-  const match = text.match(/```(?:json)?\n([\s\S]*?)```/);
-  if (match)
-    return match[1]!.trim();
-  const jsonMatch = text.match(/[[{][\s\S]*[\]}]/);
-  return jsonMatch ? jsonMatch[0] : text;
+export async function invokeHaikuText(prompt: string, retries = 3): Promise<string> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const command = new ConverseCommand({
+        modelId: HAIKU_MODEL,
+        messages: [{ role: 'user', content: [{ text: prompt }] }],
+        inferenceConfig: { maxTokens: 256, temperature: 0 },
+      });
+
+      const response = await client.send(command);
+      return extractText(response);
+    }
+    catch (err) {
+      const isThrottled = err instanceof Error && err.message.includes('Too many requests');
+      if (isThrottled && attempt < retries) {
+        const delay = 1000 * (attempt + 1);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Exhausted retries');
 }

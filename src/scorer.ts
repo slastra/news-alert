@@ -1,6 +1,7 @@
 import type { Article } from './parser.ts';
 import type { Storage } from './storage.ts';
-import { extractJSON, invokeHaiku, invokeNova } from './bedrock.ts';
+import { invokeHaiku, invokeNemotron } from './bedrock.ts';
+import { LOCATION_NAME } from './config.ts';
 import { log } from './logger.ts';
 
 const ALERT_THRESHOLD = 8;
@@ -12,17 +13,48 @@ export interface ScoredArticle extends Article {
   confirmReason?: string;
 }
 
-const SCORING_PROMPT = `You are a news severity classifier. Score each article headline from 1-10 based on how critical/urgent the event is:
+const SCORING_SCHEMA = {
+  type: 'object',
+  properties: {
+    scores: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          index: { type: 'integer' },
+          score: { type: 'integer' },
+          reason: { type: 'string' },
+        },
+        required: ['index', 'score', 'reason'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['scores'],
+  additionalProperties: false,
+};
 
-1-3: Routine (celebrity, sports, lifestyle, local interest, opinion pieces)
-4-5: Notable (policy changes, business news, elections, legal proceedings)
-6-7: Significant (major international incidents, large protests, economic crises, significant military movements)
-8-9: Critical (active armed conflicts, major terrorist attacks, natural disasters with mass casualties, nuclear incidents)
-10: Existential (nuclear war, pandemic declarations, war between major world powers)
+const CONFIRM_SCHEMA = {
+  type: 'object',
+  properties: {
+    confirmed: { type: 'boolean' },
+    reason: { type: 'string' },
+  },
+  required: ['confirmed', 'reason'],
+  additionalProperties: false,
+};
 
-Score based on the EVENT described, not how well-written the headline is. Breaking news about ongoing crises should score based on the severity of the crisis itself.
+const SCORING_PROMPT = `You are a personal news relevance classifier. Score each headline 1-10 based on whether a person in ${LOCATION_NAME} should take action or change behavior as a result.
 
-Respond with ONLY a JSON array. Each element must have:
+1-3: No action needed (celebrity, sports, opinion, distant events with no local impact)
+4-5: Worth knowing but no action (policy changes, international diplomacy, economic trends)
+6-7: Might affect decisions soon (gas/food price spikes, travel disruptions, regional severe weather forecasts, major policy changes affecting daily life)
+8-9: Action needed now (local severe weather warnings, nearby active threats, infrastructure failures, evacuation orders, pandemic declarations affecting the US)
+10: Immediate personal danger (tornado on the ground nearby, nuclear incident, active threat in the area)
+
+Score based on ACTIONABILITY — would this headline cause a reasonable person to do something different today? Distant wars, foreign disasters, and political drama score low unless they directly impact daily life (e.g. gas prices, supply chains, travel).
+
+Respond with a JSON object containing a "scores" array. Each element must have:
 - "index": the article number (starting at 0)
 - "score": integer 1-10
 - "reason": brief explanation (10 words max)
@@ -31,11 +63,12 @@ Articles to score:
 `;
 
 function buildConfirmPrompt(sentAlerts: string[]): string {
-  let prompt = `You are a critical news verification system. An article was flagged as potentially critical (score 8+/10). Your job is to confirm whether this truly warrants an emergency alert.
+  let prompt = `You are a personal alert verification system. An article was flagged as potentially actionable (score 8+/10) for someone in ${LOCATION_NAME}. Confirm whether this truly requires them to take action or change behavior.
 
 Consider:
-- Is this an ACTIVE emergency or just reporting/analysis of past events?
-- Does the headline describe real-world harm at scale (deaths, destruction, immediate danger)?
+- Does this require the person to DO something (shelter, evacuate, avoid an area, prepare, change plans)?
+- Is the threat ACTIVE and CURRENT, not just reporting on past events?
+- Is this geographically relevant (local, regional, or nationally impactful)?
 - Could this be clickbait or sensationalized?
 - Has a notification ALREADY been sent for this same event? If so, do NOT confirm — avoid duplicate alerts.`;
 
@@ -43,11 +76,7 @@ Consider:
     prompt += `\n\nNotifications already sent today:\n${sentAlerts.join('\n')}`;
   }
 
-  prompt += `\n\nRespond with ONLY JSON:
-{
-  "confirmed": true/false,
-  "reason": "brief explanation (15 words max)"
-}
+  prompt += `\n\nRespond with a JSON object containing "confirmed" (boolean) and "reason" (brief explanation, 15 words max).
 
 Article headline: `;
 
@@ -56,20 +85,25 @@ Article headline: `;
 
 const BATCH_SIZE = 20;
 
+interface ScoreEntry {
+  index: number;
+  score: number;
+  reason: string;
+}
+
 async function scoreBatch(batch: Article[], offset: number): Promise<ScoredArticle[]> {
   const headlines = batch
     .map((a, i) => `${i}. [${a.source}] ${a.title}`)
     .join('\n');
 
-  let scores: { index: number; score: number; reason: string }[];
+  let scores: ScoreEntry[];
 
   try {
-    const raw = await invokeNova(SCORING_PROMPT + headlines);
-    const cleaned = extractJSON(raw);
-    scores = JSON.parse(cleaned) as typeof scores;
+    const result = await invokeNemotron<{ scores: ScoreEntry[] }>(SCORING_PROMPT + headlines, SCORING_SCHEMA, 'scoring');
+    scores = result.scores;
   }
   catch (err) {
-    log.error(`Nova scoring failed (batch at offset ${offset})`, err);
+    log.error(`Nemotron scoring failed (batch at offset ${offset})`, err);
     return batch.map(a => ({ ...a, score: 0, reason: 'scoring failed' }));
   }
 
@@ -105,9 +139,11 @@ export async function scoreArticles(articles: Article[], storage: Storage): Prom
 
   for (const article of critical) {
     try {
-      const raw = await invokeHaiku(`${confirmPrompt}"${article.title}" (${article.source})`);
-      const cleaned = extractJSON(raw);
-      const result = JSON.parse(cleaned) as { confirmed: boolean; reason: string };
+      const result = await invokeHaiku<{ confirmed: boolean; reason: string }>(
+        `${confirmPrompt}"${article.title}" (${article.source})`,
+        CONFIRM_SCHEMA,
+        'confirmation',
+      );
       article.confirmed = result.confirmed;
       article.confirmReason = result.reason;
     }
@@ -122,18 +158,24 @@ export async function scoreArticles(articles: Article[], storage: Storage): Prom
 }
 
 export async function logScoredArticles(articles: ScoredArticle[]): Promise<void> {
-  const { sendAlert } = await import('./notify.ts');
+  const { notify } = await import('./notifiers/index.ts');
 
   for (const a of articles) {
     if (a.score >= ALERT_THRESHOLD && a.confirmed) {
-      log.info(`🚨 ALERT [${a.score}/10] ${a.source}: "${a.title}" — ${a.reason} (confirmed: ${a.confirmReason})`);
-      await sendAlert(a);
+      log.info(`ALERT [${a.score}/10] ${a.source}: "${a.title}" (${a.confirmReason})`);
+      await notify({
+        title: `[${a.score}/10] ${a.source}`,
+        body: `${a.title}\n\n${a.confirmReason}`,
+        url: a.url,
+        priority: a.score >= 9 ? 'urgent' : 'high',
+        source: a.source,
+      });
     }
     else if (a.score >= ALERT_THRESHOLD) {
-      log.info(`⚠️  HIGH [${a.score}/10] ${a.source}: "${a.title}" — ${a.reason} (not confirmed: ${a.confirmReason})`);
+      log.info(`HIGH [${a.score}/10] ${a.source}: "${a.title}" (${a.confirmReason})`);
     }
     else if (a.score >= 6) {
-      log.info(`📰 [${a.score}/10] ${a.source}: "${a.title}" — ${a.reason}`);
+      log.info(`[${a.score}/10] ${a.source}: "${a.title}"`);
     }
     // 1-5: silent, only logged as [NEW] by the poller
   }
