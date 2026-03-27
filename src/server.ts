@@ -2,7 +2,20 @@ import type { Storage } from './storage.ts';
 import { SERVER_PORT } from './config.ts';
 import { log } from './logger.ts';
 import { sqliteDateTime } from './storage.ts';
-import { generateSummary } from './summarizer.ts';
+
+const ALLOWED_ORIGIN = 'https://shaun.lastra.us';
+
+function corsHeaders(): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+}
+
+function jsonResponse(data: unknown): Response {
+  return Response.json(data, { headers: corsHeaders() });
+}
 
 export function startServer(storage: Storage): void {
   Bun.serve({
@@ -10,20 +23,22 @@ export function startServer(storage: Storage): void {
     async fetch(req) {
       const url = new URL(req.url);
 
+      if (req.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: corsHeaders() });
+      }
+
+      if (url.pathname === '/health') {
+        return new Response('ok', { status: 200 });
+      }
+
       if (url.pathname === '/status') {
         const stats = storage.getStats();
-        return Response.json(stats);
+        return jsonResponse(stats);
       }
 
       if (url.pathname === '/summary') {
-        const sixHoursAgo = sqliteDateTime(new Date(Date.now() - 21600_000));
-        const headlines = storage.getTopHeadlines(5, sixHoursAgo);
-        const summary = await generateSummary(headlines);
-        return Response.json({
-          summary,
-          generatedAt: new Date().toISOString(),
-          topArticles: headlines,
-        });
+        const cached = storage.getLatestSummary();
+        return jsonResponse(cached ?? { summary: null, generatedAt: null, topArticles: [] });
       }
 
       if (url.pathname === '/history') {
@@ -32,15 +47,15 @@ export function startServer(storage: Storage): void {
         const from = url.searchParams.get('from') ?? twentyFourHoursAgo;
         const to = url.searchParams.get('to') ?? now;
         const snapshots = storage.getHistory(from, to);
-        return Response.json(snapshots);
+        return jsonResponse(snapshots);
       }
 
       if (url.pathname === '/hazards') {
         const hazards = storage.getRecentHazards();
-        return Response.json(hazards);
+        return jsonResponse(hazards);
       }
 
-      return new Response('Not Found', { status: 404 });
+      return new Response('Not Found', { status: 404, headers: corsHeaders() });
     },
   });
 

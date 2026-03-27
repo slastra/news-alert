@@ -65,16 +65,18 @@ export function startPollGroup(
   storage: Storage,
 ): ReturnType<typeof setInterval> {
   const tick = async () => {
-    // Collect new articles across all feeds in this group
-    const allNew: Article[] = [];
+    // Fetch all feeds in this group concurrently
+    const results = await Promise.allSettled(
+      feeds.map(feed => fetchNewArticles(feed, storage)),
+    );
 
-    for (const feed of feeds) {
-      try {
-        const newArticles = await fetchNewArticles(feed, storage);
-        allNew.push(...newArticles);
+    const allNew: Article[] = [];
+    for (const [i, result] of results.entries()) {
+      if (result.status === 'fulfilled') {
+        allNew.push(...result.value);
       }
-      catch (err) {
-        log.error(`Unexpected error polling ${feed.name}`, err);
+      else {
+        log.error(`Unexpected error polling ${feeds[i]?.name ?? `feed ${i}`}`, result.reason);
       }
     }
 

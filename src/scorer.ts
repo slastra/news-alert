@@ -47,12 +47,16 @@ const CONFIRM_SCHEMA = {
 const SCORING_PROMPT = `You are a personal news relevance classifier. Score each headline 1-10 based on whether a person in ${LOCATION_NAME} should take action or change behavior as a result.
 
 1-3: No action needed (celebrity, sports, opinion, distant events with no local impact)
-4-5: Worth knowing but no action (policy changes, international diplomacy, economic trends)
-6-7: Might affect decisions soon (gas/food price spikes, travel disruptions, regional severe weather forecasts, major policy changes affecting daily life)
+4-5: Informational only — no behavior change needed this week (policy debates, international diplomacy, economic trends, distant conflicts)
+6-7: May require action within days (gas/food price spikes, travel disruptions, regional severe weather forecasts, major policy changes affecting daily life)
 8-9: Action needed now (local severe weather warnings, nearby active threats, infrastructure failures, evacuation orders, pandemic declarations affecting the US)
 10: Immediate personal danger (tornado on the ground nearby, nuclear incident, active threat in the area)
 
 Score based on ACTIONABILITY — would this headline cause a reasonable person to do something different today? Distant wars, foreign disasters, and political drama score low unless they directly impact daily life (e.g. gas prices, supply chains, travel).
+
+Score based on CURRENT threat level. Future forecasts score lower than active events — a hurricane forecast for next week is a 6; a hurricane making landfall now is a 9. Past events being reported after the fact score lower than ongoing situations.
+
+Score based on headline content, not source reputation.
 
 Respond with a JSON object containing a "scores" array. Each element must have:
 - "index": the article number (starting at 0)
@@ -63,14 +67,14 @@ Articles to score:
 `;
 
 function buildConfirmPrompt(sentAlerts: string[]): string {
-  let prompt = `You are a personal alert verification system. An article was flagged as potentially actionable (score 8+/10) for someone in ${LOCATION_NAME}. Confirm whether this truly requires them to take action or change behavior.
+  let prompt = `You are a personal alert verification system. An article was flagged as potentially actionable (score 8+/10) for someone in ${LOCATION_NAME}. Confirm whether this truly requires them to take action or do something different today.
 
-Consider:
-- Does this require the person to DO something (shelter, evacuate, avoid an area, prepare, change plans)?
+Consider — reject early if any check fails:
+- Has a notification ALREADY been sent for this same event? Consider two headlines duplicates if they describe the same underlying event, even with different wording or from different sources. If already sent, do NOT confirm.
 - Is the threat ACTIVE and CURRENT, not just reporting on past events?
+- Does this require the person to DO something (shelter, evacuate, avoid an area, prepare, change plans)?
 - Is this geographically relevant (local, regional, or nationally impactful)?
-- Could this be clickbait or sensationalized?
-- Has a notification ALREADY been sent for this same event? If so, do NOT confirm — avoid duplicate alerts.`;
+- Could this be clickbait or sensationalized?`;
 
   if (sentAlerts.length > 0) {
     prompt += `\n\nNotifications already sent today:\n${sentAlerts.join('\n')}`;

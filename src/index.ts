@@ -63,6 +63,21 @@ async function takeSnapshot() {
 const snapshotInterval = setInterval(takeSnapshot, 3600_000);
 intervals.push(snapshotInterval);
 
+// Daily DB cleanup (retain 7 days)
+function runCleanup() {
+  try {
+    storage.cleanup();
+    log.info('DB cleanup: removed records older than 7 days');
+  }
+  catch (err) {
+    log.error('DB cleanup failed', err);
+  }
+}
+
+runCleanup(); // Run on startup
+const cleanupInterval = setInterval(runCleanup, 86400_000);
+intervals.push(cleanupInterval);
+
 // Graceful shutdown
 function cleanup() {
   log.info('Shutting down...');

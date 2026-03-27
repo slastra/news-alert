@@ -6,7 +6,7 @@ news-alert monitors RSS feeds and natural hazard APIs in the background, scoring
 
 ## What it monitors
 
-**News** — 10 RSS feeds (BBC, Sky News, Google News, Al Jazeera, CBS, Guardian, NYT, NPR, France 24, Lemmy) polled every 60s–5min. Headlines are batch-scored 1–10 by Amazon Nova Lite. Articles scoring 8+ are confirmed by Claude Haiku before sending a notification, preventing clickbait from getting through.
+**News** — 10 RSS feeds (BBC, Sky News, Google News, Al Jazeera, CBS, Guardian, NYT, NPR, France 24, Lemmy) polled every 60s–5min. Headlines are batch-scored 1–10 by Nvidia Nemotron. Articles scoring 8+ are confirmed by Claude Haiku before sending a notification, preventing clickbait from getting through.
 
 **Weather & Civil Emergencies** — NWS alerts for your location, including severe weather *and* non-weather emergencies: AMBER alerts, evacuation orders, shelter-in-place, hazmat warnings, nuclear plant warnings, law enforcement alerts, 911 outages.
 
@@ -19,7 +19,7 @@ news-alert monitors RSS feeds and natural hazard APIs in the background, scoring
 ## How it works
 
 ```
-RSS Feeds ──→ Nova Lite (score 1-10) ──→ Haiku (confirm 8+) ──→ ntfy push
+RSS Feeds ──→ Nemotron (score 1-10) ──→ Haiku (confirm 8+) ──→ ntfy push
 NWS API ────→ severity filter ──────────────────────────────→ ntfy push
 USGS/NASA ──→ threshold filter ─────────────────────────────→ ntfy push
 ```
@@ -31,7 +31,7 @@ The Haiku confirmation step receives context about all notifications already sen
 ### Prerequisites
 
 - [Bun](https://bun.sh) runtime
-- AWS account with [Bedrock](https://aws.amazon.com/bedrock/) access (us-east-1) for Nova Lite and Claude Haiku
+- AWS account with [Bedrock](https://aws.amazon.com/bedrock/) access (us-east-1) for Nemotron and Claude Haiku
 - [ntfy](https://ntfy.sh) for push notifications (free, no account needed)
 
 ### Install
@@ -59,7 +59,7 @@ HAZARD_LAT=40.7128
 HAZARD_LON=-74.0060
 ```
 
-Set up AWS credentials for Bedrock access (Nova Lite + Claude Haiku):
+Set up AWS credentials for Bedrock access (Nemotron + Claude Haiku):
 
 ```bash
 aws configure  # or set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in .env
@@ -98,7 +98,7 @@ The status server runs on port 3100:
 
 All hazard APIs (NWS, USGS, NASA) are free with no API keys. The only cost is Bedrock LLM usage:
 
-- **Nova Lite** — batch-scores headlines (~$0.005/day)
+- **Nemotron** — batch-scores headlines (~$0.005/day)
 - **Claude Haiku** — confirms critical articles + hourly summaries (~$0.005/day)
 - **Total** — ~$0.01/day (~$0.30/month)
 
@@ -113,7 +113,7 @@ src/
 ├── parser.ts       RSS XML normalization
 ├── storage.ts      SQLite persistence and queries
 ├── poller.ts       Feed poll loop: fetch → parse → dedupe → score → notify
-├── bedrock.ts      Shared AWS Bedrock client (Nova Lite + Haiku)
+├── bedrock.ts      Shared AWS Bedrock client (Nemotron + Haiku)
 ├── scorer.ts       Two-tier LLM scoring with duplicate-aware confirmation
 ├── summarizer.ts   LLM news summary generation
 ├── hazards.ts      Natural hazard monitoring (NWS, USGS, NASA)

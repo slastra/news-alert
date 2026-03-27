@@ -1,4 +1,5 @@
 import { invokeHaikuText } from './bedrock.ts';
+import { LOCATION_NAME } from './config.ts';
 import { log } from './logger.ts';
 
 interface Headline {
@@ -7,7 +8,9 @@ interface Headline {
   score: number;
 }
 
-const SUMMARY_PROMPT = `You are a concise news briefing assistant. Given these top news headlines from the last 6 hours, write a 2-3 sentence summary focusing on the most important events. Be factual and succinct — no filler or commentary.
+const SUMMARY_PROMPT = `You are a concise news briefing assistant for someone in ${LOCATION_NAME}. Given these top news headlines from the last 6 hours, write a 2-3 sentence summary focusing on the most important events.
+
+Prioritize higher-scored headlines — a score-9 headline should dominate over a score-5. If multiple headlines cover the same event from different angles, synthesize them into a single coherent point. Be factual and succinct — no filler or commentary.
 
 Headlines:
 `;

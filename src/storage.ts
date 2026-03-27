@@ -373,6 +373,31 @@ export class Storage {
     );
   }
 
+  getLatestSummary(): { summary: string; generatedAt: string; topArticles: { title: string; source: string; score: number; url: string }[] } | null {
+    const row = this.db.query(`
+      SELECT summary, recorded_at, snapshot_json
+      FROM status_snapshots
+      WHERE summary IS NOT NULL
+      ORDER BY recorded_at DESC
+      LIMIT 1
+    `).get() as { summary: string; recorded_at: string; snapshot_json: string } | null;
+
+    if (!row)
+      return null;
+
+    const snapshot = JSON.parse(row.snapshot_json) as StatusResponse;
+    return {
+      summary: row.summary,
+      generatedAt: row.recorded_at,
+      topArticles: snapshot.topArticles.map(a => ({
+        title: a.title,
+        source: a.source,
+        score: a.score,
+        url: a.url,
+      })),
+    };
+  }
+
   getHistory(from: string, to: string): { recordedAt: string; compositeScore: number; articleCount1h: number; alertCount24h: number; summary: string | null }[] {
     const rows = this.db.query(`
       SELECT recorded_at, composite_score, article_count_1h, alert_count_24h, summary
@@ -388,6 +413,17 @@ export class Storage {
       alertCount24h: r.alert_count_24h,
       summary: r.summary,
     }));
+  }
+
+  cleanup(retentionDays = 7): void {
+    const cutoff = sqliteDateTime(new Date(Date.now() - retentionDays * 86400_000));
+    const tx = this.db.transaction(() => {
+      this.db.run('DELETE FROM article_scores WHERE guid IN (SELECT guid FROM seen_articles WHERE first_seen_at < ?)', [cutoff]);
+      this.db.run('DELETE FROM seen_articles WHERE first_seen_at < ?', [cutoff]);
+      this.db.run('DELETE FROM seen_hazards WHERE first_seen_at < ?', [cutoff]);
+      this.db.run('DELETE FROM status_snapshots WHERE recorded_at < ?', [cutoff]);
+    });
+    tx();
   }
 
   close(): void {

@@ -72,7 +72,7 @@ export async function invokeHaikuText(prompt: string, retries = 3): Promise<stri
       const command = new ConverseCommand({
         modelId: HAIKU_MODEL,
         messages: [{ role: 'user', content: [{ text: prompt }] }],
-        inferenceConfig: { maxTokens: 256, temperature: 0 },
+        inferenceConfig: { maxTokens: 512, temperature: 0 },
       });
 
       const response = await client.send(command);
