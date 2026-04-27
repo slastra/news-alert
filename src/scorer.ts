@@ -1,6 +1,6 @@
 import type { Article } from './parser.ts';
 import type { Storage } from './storage.ts';
-import { invokeHaiku, invokeNemotron } from './bedrock.ts';
+import { invokeHaiku } from './bedrock.ts';
 import { LOCATION_NAME } from './config.ts';
 import { log } from './logger.ts';
 
@@ -13,10 +13,10 @@ export interface ScoredArticle extends Article {
   confirmReason?: string;
 }
 
-const SCORING_SCHEMA = {
+const UNIFIED_SCHEMA = {
   type: 'object',
   properties: {
-    scores: {
+    results: {
       type: 'array',
       items: {
         type: 'object',
@@ -24,99 +24,122 @@ const SCORING_SCHEMA = {
           index: { type: 'integer' },
           score: { type: 'integer' },
           reason: { type: 'string' },
+          confirmed: { type: 'boolean' },
+          confirmReason: { type: 'string' },
         },
-        required: ['index', 'score', 'reason'],
+        required: ['index', 'score', 'reason', 'confirmed', 'confirmReason'],
         additionalProperties: false,
       },
     },
   },
-  required: ['scores'],
+  required: ['results'],
   additionalProperties: false,
 };
 
-const CONFIRM_SCHEMA = {
-  type: 'object',
-  properties: {
-    confirmed: { type: 'boolean' },
-    reason: { type: 'string' },
-  },
-  required: ['confirmed', 'reason'],
-  additionalProperties: false,
-};
+function formatAge(publishedAt: string): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(publishedAt).getTime()) / 60_000));
+  if (minutes < 60)
+    return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24)
+    return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
 
-const SCORING_PROMPT = `You are a personal news relevance classifier. Score each headline 1-10 based on whether a person in ${LOCATION_NAME} should take action or change behavior as a result.
+function buildPrompt(sentAlerts: string[]): string {
+  let prompt = `You are a personal news relevance classifier for someone in ${LOCATION_NAME}. For each headline, return a score (1-10) and a confirmation flag indicating whether to send a push notification.
 
-1-3: No action needed (celebrity, sports, opinion, distant events with no local impact)
-4-5: Informational only — no behavior change needed this week (policy debates, international diplomacy, economic trends, distant conflicts)
-6-7: May require action within days (gas/food price spikes, travel disruptions, regional severe weather forecasts, major policy changes affecting daily life)
-8-9: Action needed now (local severe weather warnings, nearby active threats, infrastructure failures, evacuation orders, pandemic declarations affecting the US)
-10: Immediate personal danger (tornado on the ground nearby, nuclear incident, active threat in the area)
+BIAS: When uncertain, score lower and do not confirm. Notification fatigue is the failure mode — a missed alert can be caught next cycle, but a false alarm trains the user to ignore real ones.
 
-Score based on ACTIONABILITY — would this headline cause a reasonable person to do something different today? Distant wars, foreign disasters, and political drama score low unless they directly impact daily life (e.g. gas prices, supply chains, travel).
+TIMING: Each headline shows its age in parentheses (e.g. "12m ago", "3h ago"). Older stories are usually less actionable — a tornado warning published 4 hours ago has likely expired, while one from 5 minutes ago is active. A weather forecast from 2 hours ago may be stale by now. Factor age into both score and confirmation.
 
-Score based on CURRENT threat level. Future forecasts score lower than active events — a hurricane forecast for next week is a 6; a hurricane making landfall now is a 9. Past events being reported after the fact score lower than ongoing situations.
+SCORE BANDS (based on actionability for someone in ${LOCATION_NAME} TODAY):
+- 1-3: No action needed. Default for celebrity, sports, opinion, distant non-impacting events. Score higher only if the headline names a directly actionable consequence.
+- 4-5: Informational only — no behavior change needed this week (policy debates, international diplomacy, economic trends, distant conflicts).
+- 6-7: May require action within days (gas/food price spikes, travel disruptions, regional severe weather forecasts, major policy changes affecting daily life).
+- 8-9: Action needed now — active local/regional threats, evacuation orders, infrastructure failures, pandemic declarations affecting the US.
+- 10: Reserved for civilization-scale events (nuclear war declared, asteroid impact). Almost never reachable from a news headline — local extreme threats reach the user via NWS first.
 
-Score based on headline content, not source reputation.
+GEOGRAPHIC BINDING:
+- Local = within the same metro area as ${LOCATION_NAME}.
+- Regional = within ~500 miles of ${LOCATION_NAME}.
+- National = US-wide impact.
+- Anything else = distant.
 
-Respond with a JSON object containing a "scores" array. Each element must have:
-- "index": the article number (starting at 0)
+CONFIRMATION (only when score >= 8):
+- Has this event already been notified today? (See sent-alerts list below.) Two headlines describe the same event if their underlying facts overlap, regardless of wording. Duplicate => confirmed = false.
+- Is the threat ACTIVE and CURRENT, not a past report or future forecast? Forecast or recap => confirmed = false.
+- Does the headline specify a concrete event, location, or required action — or is it urgent-sounding without substance? Vague urgency => confirmed = false.
+- If you cannot clearly answer YES to all three: confirmed = false.
+
+For any score < 8: set confirmed = false, confirmReason = "below threshold".
+
+EXAMPLES (anchors):
+- "Hurricane forecast for Florida next week" => score 6, confirmed false, "future forecast, not active".
+- "Trump assassination attempt — new details emerge" with prior alert "Trump assassination attempt at rally" => score 8, confirmed false, "duplicate of prior alert".
+- "BREAKING: Markets in turmoil" => score 4, confirmed false, "vague urgency, no concrete event".
+- "Tornado warning issued for ${LOCATION_NAME}" with no prior alert => score 9, confirmed true, "active local threat".
+
+OUTPUT: A JSON object { "results": [...] } with one entry per headline, in the same index order as input. Each entry:
+- "index": integer matching input
 - "score": integer 1-10
-- "reason": brief explanation (10 words max)
-
-Articles to score:
-`;
-
-function buildConfirmPrompt(sentAlerts: string[]): string {
-  let prompt = `You are a personal alert verification system. An article was flagged as potentially actionable (score 8+/10) for someone in ${LOCATION_NAME}. Confirm whether this truly requires them to take action or do something different today.
-
-Consider — reject early if any check fails:
-- Has a notification ALREADY been sent for this same event? Consider two headlines duplicates if they describe the same underlying event, even with different wording or from different sources. If already sent, do NOT confirm.
-- Is the threat ACTIVE and CURRENT, not just reporting on past events?
-- Does this require the person to DO something (shelter, evacuate, avoid an area, prepare, change plans)?
-- Is this geographically relevant (local, regional, or nationally impactful)?
-- Could this be clickbait or sensationalized?`;
+- "reason": <=10 words, scoring justification
+- "confirmed": boolean
+- "confirmReason": <=15 words`;
 
   if (sentAlerts.length > 0) {
-    prompt += `\n\nNotifications already sent today:\n${sentAlerts.join('\n')}`;
+    prompt += `\n\nSENT ALERTS (last 24h — do not duplicate):\n${sentAlerts.join('\n')}`;
   }
 
-  prompt += `\n\nRespond with a JSON object containing "confirmed" (boolean) and "reason" (brief explanation, 15 words max).
-
-Article headline: `;
-
+  prompt += `\n\nHEADLINES TO SCORE:\n`;
   return prompt;
 }
 
 const BATCH_SIZE = 20;
 
-interface ScoreEntry {
+interface ResultEntry {
   index: number;
   score: number;
   reason: string;
+  confirmed: boolean;
+  confirmReason: string;
 }
 
-async function scoreBatch(batch: Article[], offset: number): Promise<ScoredArticle[]> {
+async function scoreBatch(batch: Article[], offset: number, sentAlerts: string[]): Promise<ScoredArticle[]> {
   const headlines = batch
-    .map((a, i) => `${i}. [${a.source}] ${a.title}`)
+    .map((a, i) => {
+      const head = `${i}. [${a.source}] (${formatAge(a.publishedAt)}) ${a.title}`;
+      return a.description ? `${head}\n   ${a.description}` : head;
+    })
     .join('\n');
 
-  let scores: ScoreEntry[];
+  const prompt = buildPrompt(sentAlerts) + headlines;
+
+  let results: ResultEntry[];
 
   try {
-    const result = await invokeNemotron<{ scores: ScoreEntry[] }>(SCORING_PROMPT + headlines, SCORING_SCHEMA, 'scoring');
-    scores = result.scores;
+    const response = await invokeHaiku<{ results: ResultEntry[] }>(prompt, UNIFIED_SCHEMA, 'score-and-confirm');
+    results = response.results;
   }
   catch (err) {
-    log.error(`Nemotron scoring failed (batch at offset ${offset})`, err);
-    return batch.map(a => ({ ...a, score: 0, reason: 'scoring failed' }));
+    log.error(`Haiku scoring failed (batch at offset ${offset})`, err);
+    return batch.map(a => ({
+      ...a,
+      score: 0,
+      reason: 'scoring failed',
+      confirmed: false,
+      confirmReason: 'scoring failed',
+    }));
   }
 
   return batch.map((article, i) => {
-    const scoreEntry = scores.find(s => s.index === i);
+    const entry = results.find(r => r.index === i);
     return {
       ...article,
-      score: scoreEntry?.score ?? 0,
-      reason: scoreEntry?.reason ?? 'no score returned',
+      score: entry?.score ?? 0,
+      reason: entry?.reason ?? 'no score returned',
+      confirmed: entry?.confirmed ?? false,
+      confirmReason: entry?.confirmReason ?? 'no result returned',
     };
   });
 }
@@ -125,37 +148,13 @@ export async function scoreArticles(articles: Article[], storage: Storage): Prom
   if (articles.length === 0)
     return [];
 
-  // Score in batches to avoid output truncation
+  const sentAlerts = storage.getSentAlerts24h();
+
   const scored: ScoredArticle[] = [];
   for (let i = 0; i < articles.length; i += BATCH_SIZE) {
     const batch = articles.slice(i, i + BATCH_SIZE);
-    const results = await scoreBatch(batch, i);
+    const results = await scoreBatch(batch, i, sentAlerts);
     scored.push(...results);
-  }
-
-  // Confirm high-scoring articles with Haiku
-  const critical = scored.filter(a => a.score >= ALERT_THRESHOLD);
-  if (critical.length === 0)
-    return scored;
-
-  const sentAlerts = storage.getSentAlerts24h();
-  const confirmPrompt = buildConfirmPrompt(sentAlerts);
-
-  for (const article of critical) {
-    try {
-      const result = await invokeHaiku<{ confirmed: boolean; reason: string }>(
-        `${confirmPrompt}"${article.title}" (${article.source})`,
-        CONFIRM_SCHEMA,
-        'confirmation',
-      );
-      article.confirmed = result.confirmed;
-      article.confirmReason = result.reason;
-    }
-    catch (err) {
-      log.error(`Haiku confirmation failed for "${article.title}"`, err);
-      article.confirmed = false;
-      article.confirmReason = 'confirmation failed';
-    }
   }
 
   return scored;

@@ -36,17 +36,26 @@ export async function loadNotifiers(): Promise<void> {
   log.info(`Notifiers loaded: ${notifiers.map(n => n.name).join(', ') || 'none'}`);
 }
 
-export async function notify(notification: Notification): Promise<void> {
-  await Promise.allSettled(
-    notifiers.map(async (n) => {
-      try {
-        await n.send(notification);
-      }
-      catch (err) {
-        log.error(`Notifier "${n.name}" failed for "${notification.title}"`, err);
-      }
-    }),
+export interface NotifyResult {
+  attempted: number;
+  succeeded: number;
+}
+
+export async function notify(notification: Notification): Promise<NotifyResult> {
+  const results = await Promise.allSettled(
+    notifiers.map(n => n.send(notification)),
   );
+  let succeeded = 0;
+  for (const [i, result] of results.entries()) {
+    if (result.status === 'fulfilled') {
+      succeeded++;
+    }
+    else {
+      const name = notifiers[i]?.name ?? '?';
+      log.error(`Notifier "${name}" failed for "${notification.title}"`, result.reason);
+    }
+  }
+  return { attempted: notifiers.length, succeeded };
 }
 
 export type { Notification } from './types.ts';

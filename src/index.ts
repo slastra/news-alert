@@ -27,23 +27,33 @@ for (const feed of FEEDS) {
 
 log.info(`Starting: ${FEEDS.length} feeds, ${groups.size} groups`);
 
-// Load notification channels
-loadNotifiers().catch(err => log.error('Failed to load notifiers', err));
+async function start() {
+  // Load notification channels — must complete before any poller fires so the
+  // first hazard alert isn't dropped into an empty notifier list.
+  try {
+    await loadNotifiers();
+  }
+  catch (err) {
+    log.error('Failed to load notifiers', err);
+  }
 
-// Start HTTP status server
-startServer(storage);
+  // Start HTTP status server
+  startServer(storage);
 
-// Start each poll group
-for (const [group, feeds] of groups) {
-  const interval = startPollGroup(group, feeds, POLL_INTERVALS[group], storage);
-  intervals.push(interval);
+  // Start each poll group
+  for (const [group, feeds] of groups) {
+    const interval = startPollGroup(group, feeds, POLL_INTERVALS[group], storage);
+    intervals.push(interval);
+  }
+
+  // Hazard monitoring (weather, earthquakes, volcanoes, space weather)
+  pollHazards(storage); // Initial poll on startup
+  const hazardInterval = setInterval(() => pollHazards(storage), HAZARD_POLL_MS);
+  intervals.push(hazardInterval);
+  log.info(`Hazards: polling every ${HAZARD_POLL_MS / 1000}s`);
 }
 
-// Hazard monitoring (weather, earthquakes, volcanoes, space weather)
-pollHazards(storage); // Initial poll on startup
-const hazardInterval = setInterval(() => pollHazards(storage), HAZARD_POLL_MS);
-intervals.push(hazardInterval);
-log.info(`Hazards: polling every ${HAZARD_POLL_MS / 1000}s`);
+start();
 
 // Hourly snapshot job
 async function takeSnapshot() {

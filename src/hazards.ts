@@ -241,14 +241,22 @@ export async function pollHazards(storage: Storage): Promise<void> {
         if (storage.isHazardSeen(alert.source, alert.id))
           continue;
 
-        storage.markHazardSeen(alert.source, alert.id, alert.title, alert.severity);
-        await notify({
+        const result = await notify({
           title: `[${alert.severity.toUpperCase()}] ${alert.source}`,
           body: `${alert.title}\n\n${alert.description}`,
           url: alert.url,
           priority: alert.severity === 'extreme' ? 'urgent' : 'high',
           source: alert.source,
         });
+
+        // If notifiers were registered but all failed, leave the alert unmarked
+        // so the next poll retries delivery.
+        if (result.attempted > 0 && result.succeeded === 0) {
+          log.warn(`Hazard delivery failed, will retry: [${alert.severity}] ${alert.source}: "${alert.title}"`);
+          continue;
+        }
+
+        storage.markHazardSeen(alert.source, alert.id, alert.title, alert.severity);
         totalNew++;
         log.info(`New hazard: [${alert.severity}] ${alert.source}: "${alert.title}"`);
       }

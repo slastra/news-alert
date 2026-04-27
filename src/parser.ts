@@ -6,7 +6,10 @@ export interface Article {
   url: string;
   publishedAt: string;
   source: string;
+  description?: string;
 }
+
+const DESCRIPTION_MAX_LEN = 400;
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -36,6 +39,46 @@ function extractText(value: unknown): string | null {
   return null;
 }
 
+function stripHtml(input: string): string {
+  return input
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;|&#39;/g, '\'')
+    .replace(/&apos;/g, '\'')
+    .replace(/&[a-z]+;/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractDescription(item: Record<string, unknown>, title: string): string | undefined {
+  // Prefer <description>; fall back to <content:encoded> (namespace stripped to "encoded")
+  const raw = extractText(item.description) ?? extractText(item.encoded);
+  if (!raw)
+    return undefined;
+
+  const cleaned = stripHtml(raw);
+  if (!cleaned)
+    return undefined;
+
+  // Skip if description is just the title verbatim (some feeds do this)
+  if (cleaned.toLowerCase() === title.toLowerCase())
+    return undefined;
+
+  if (cleaned.length <= DESCRIPTION_MAX_LEN)
+    return cleaned;
+
+  // Truncate at the last sentence boundary within the cap, falling back to a hard cut.
+  const truncated = cleaned.slice(0, DESCRIPTION_MAX_LEN);
+  const lastBoundary = Math.max(truncated.lastIndexOf('. '), truncated.lastIndexOf('? '), truncated.lastIndexOf('! '));
+  return lastBoundary > DESCRIPTION_MAX_LEN / 2
+    ? `${truncated.slice(0, lastBoundary + 1)}`
+    : `${truncated.trimEnd()}…`;
+}
+
 function normalizeItem(item: Record<string, unknown>, source: string, isLemmy: boolean): Article | null {
   const title = extractText(item.title);
   if (!title)
@@ -63,7 +106,9 @@ function normalizeItem(item: Record<string, unknown>, source: string, isLemmy: b
     publishedAt = new Date().toISOString();
   }
 
-  return { guid, title, url, publishedAt, source };
+  const description = extractDescription(item, title);
+
+  return { guid, title, url, publishedAt, source, description };
 }
 
 export function parseRssFeed(xml: string, source: string, feedUrl: string): Article[] {

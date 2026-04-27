@@ -12,6 +12,8 @@ const SUMMARY_PROMPT = `You are a concise news briefing assistant for someone in
 
 Prioritize higher-scored headlines — a score-9 headline should dominate over a score-5. If multiple headlines cover the same event from different angles, synthesize them into a single coherent point. Be factual and succinct — no filler or commentary.
 
+Output only the prose summary — no title, header, greeting, or markdown formatting.
+
 Headlines:
 `;
 
