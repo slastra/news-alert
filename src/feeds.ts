@@ -19,6 +19,10 @@ export const FEEDS: FeedConfig[] = [
   { name: 'NPR', url: 'https://feeds.npr.org/1001/rss.xml', group: 'secondary' },
   { name: 'France 24', url: 'https://www.france24.com/en/rss', group: 'secondary' },
 
+  // Local NWA — poll every 5 minutes
+  { name: 'KNWA', url: 'https://www.nwahomepage.com/feed/', group: 'secondary' },
+  { name: '5News', url: 'https://www.5newsonline.com/feeds/syndication/rss/news', group: 'secondary' },
+
   // Lemmy — poll every 5 minutes
   { name: 'Lemmy World News', url: 'https://lemmy.world/feeds/c/worldnews.xml?sort=New', group: 'lemmy' },
 ];

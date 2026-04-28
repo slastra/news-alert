@@ -70,6 +70,7 @@ async function takeSnapshot() {
   }
 }
 
+takeSnapshot(); // Run on startup so /summary isn't empty for the first hour
 const snapshotInterval = setInterval(takeSnapshot, 3600_000);
 intervals.push(snapshotInterval);
 
