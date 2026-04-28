@@ -83,7 +83,7 @@ async function fetchWeatherAlerts(): Promise<HazardAlert[]> {
         title: f.properties.headline || f.properties.event,
         description: `${f.properties.event} — ${f.properties.areaDesc}`,
         severity,
-        url: 'https://alerts.weather.gov',
+        url: `https://forecast.weather.gov/MapClick.php?lat=${HAZARD_LOCATION.lat}&lon=${HAZARD_LOCATION.lon}`,
       };
     });
 }
